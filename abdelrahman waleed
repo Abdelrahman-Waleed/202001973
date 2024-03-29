@@ -1,0 +1,72 @@
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///hospital.db'  # Replace with your database connection string
+db = SQLAlchemy(app)
+
+class Patient(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    national_id = db.Column(db.String(10), unique=True, nullable=False)
+    first_name = db.Column(db.String(80), nullable=False)
+    last_name = db.Column(db.String(80), nullable=False)
+    # ...other patient fields
+
+    def __repr__(self):
+        return f"<Patient {self.id} - {self.first_name} {self.last_name}>"
+
+class HealthRecord(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+    date = db.Column(db.Date, nullable=False)
+    type = db.Column(db.String(50), nullable=False)
+    notes = db.Column(db.Text)
+    # ...other health record fields
+
+    def __repr__(self):
+        return f"<HealthRecord {self.id} - Patient: {self.patient_id}>"
+
+@app.route('/api/patients/<int:patient_id>', methods=['GET'])
+def get_patient(patient_id):
+    patient = Patient.query.get(patient_id)
+    if not patient:
+        return jsonify({'message': 'Patient not found'}), 404
+    return jsonify(patient.serialize())
+
+@app.route('/api/patients', methods=['POST'])
+def add_patient():
+    data = request.get_json()
+    if not data or not all(field in data for field in ['national_id', 'first_name', 'last_name']):
+        return jsonify({'message': 'Missing required fields'}), 400
+
+    if Patient.query.filter_by(national_id=data['national_id']).first():
+        return jsonify({'message': 'Patient with this National ID already exists'}), 409
+
+    new_patient = Patient(**data)
+    db.session.add(new_patient)
+    db.session.commit()
+    return jsonify(new_patient.serialize()), 201
+
+@app.route('/api/patients/<int:patient_id>/records', methods=['POST'])
+def add_health_record(patient_id):
+    data = request.get_json()
+    if not data or not all(field in data for field in ['date', 'type']):
+        return jsonify({'message': 'Missing required fields'}), 400
+
+    patient = Patient.query.get(patient_id)
+    if not patient:
+        return jsonify({'message': 'Patient not found'}), 404
+
+    new_record = HealthRecord(patient_id=patient_id, **data)
+    db.session.add(new_record)
+    db.session.commit()
+    return jsonify({'message': 'Health record added'}), 201
+
+# Helper function to convert model objects to dictionaries
+def serialize(self):
+    return {c.name: getattr(self, c.name) for c in self.__table__.columns}
+
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()  # Create tables if they don't exist
+    app.run(debug=True)
